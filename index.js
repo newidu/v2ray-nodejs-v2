@@ -364,8 +364,8 @@ const httpServer = http.createServer(async (req, res) => {
   // ========== PUBLIC ROUTES ==========
 if (url === '/sub') {
     const namePart = NAME ? `${NAME}-${ISP}` : ISP;
-    const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
-    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
+    const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=aka.ms&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
+    const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=aka.ms&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
     const subscription = vlessURL + '\n' + trojanURL;
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end(subscription + '\n');
