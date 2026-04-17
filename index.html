@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proxy Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        body { background: #0f172a; }
+        .card { background: #1e293b; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+        .log-row:hover { background: #334155; cursor: pointer; }
+    </style>
+</head>
+<body class="text-gray-200">
+    <div id="login-container" class="min-h-screen flex items-center justify-center">
+        <div class="card w-96">
+            <h2 class="text-2xl font-bold mb-6 text-center">Admin Login</h2>
+            <input type="password" id="password" placeholder="Password" class="w-full p-2 rounded bg-gray-700 border border-gray-600 mb-4">
+            <button onclick="login()" class="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded font-semibold">Login</button>
+            <div id="login-error" class="text-red-400 text-sm mt-2 text-center hidden"></div>
+        </div>
+    </div>
+
+    <div id="dashboard" class="hidden container mx-auto p-4">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold">Proxy Usage Dashboard</h1>
+            <button onclick="logout()" class="bg-red-600 px-4 py-2 rounded hover:bg-red-700">Logout</button>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div class="card">
+                <h3 class="text-xl font-semibold">Today ({{date}})</h3>
+                <p>⬆️ Upload: <span id="daily-up">0</span> MB</p>
+                <p>⬇️ Download: <span id="daily-down">0</span> MB</p>
+                <p>📊 Total: <span id="daily-total">0</span> MB</p>
+            </div>
+            <div class="card">
+                <h3 class="text-xl font-semibold">This Month ({{month}})</h3>
+                <p>⬆️ Upload: <span id="monthly-up">0</span> MB</p>
+                <p>⬇️ Download: <span id="monthly-down">0</span> MB</p>
+                <p>📊 Total: <span id="monthly-total">0</span> MB</p>
+            </div>
+            <div class="card">
+                <h3 class="text-xl font-semibold">Total Ever</h3>
+                <p>⬆️ Upload: <span id="total-up">0</span> MB</p>
+                <p>⬇️ Download: <span id="total-down">0</span> MB</p>
+                <p>📊 Total: <span id="total-total">0</span> MB</p>
+            </div>
+        </div>
+
+        <!-- Last 24h Chart -->
+        <div class="card mb-8">
+            <h3 class="text-xl font-semibold mb-2">Last 24 Hours Traffic (MB)</h3>
+            <canvas id="hourlyChart" height="100"></canvas>
+        </div>
+
+        <!-- Limits & Controls -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div class="card">
+                <h3 class="text-xl font-semibold mb-2">Usage Limits (MB)</h3>
+                <div class="space-y-2">
+                    <div><label>Daily Limit:</label> <input type="number" id="daily-limit" class="bg-gray-700 rounded p-1 w-32" value="0"> <button onclick="setLimit('daily')" class="bg-green-600 px-2 py-1 rounded text-sm">Set</button></div>
+                    <div><label>Monthly Limit:</label> <input type="number" id="monthly-limit" class="bg-gray-700 rounded p-1 w-32" value="0"> <button onclick="setLimit('monthly')" class="bg-green-600 px-2 py-1 rounded text-sm">Set</button></div>
+                    <div><label>Total Limit:</label> <input type="number" id="total-limit" class="bg-gray-700 rounded p-1 w-32" value="0"> <button onclick="setLimit('total')" class="bg-green-600 px-2 py-1 rounded text-sm">Set</button></div>
+                    <p class="text-xs text-gray-400">0 = unlimited</p>
+                </div>
+            </div>
+            <div class="card">
+                <h3 class="text-xl font-semibold mb-2">Network Recording</h3>
+                <div class="flex gap-3">
+                    <button id="btn-start-rec" onclick="startRecording()" class="bg-green-600 px-4 py-2 rounded">Start Recording</button>
+                    <button id="btn-stop-rec" onclick="stopRecording()" class="bg-red-600 px-4 py-2 rounded">Stop Recording</button>
+                    <button onclick="clearLogs()" class="bg-yellow-600 px-4 py-2 rounded">Clear Logs</button>
+                </div>
+                <p id="rec-status" class="mt-2 text-sm"></p>
+            </div>
+        </div>
+
+        <!-- Network Logs Table -->
+        <div class="card">
+            <h3 class="text-xl font-semibold mb-2">Connection Logs (last 100)</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="p-2">Time (SL)</th>
+                            <th>Client IP</th>
+                            <th>Target</th>
+                            <th>Protocol</th>
+                            <th>Upload (MB)</th>
+                            <th>Download (MB)</th>
+                            <th>Duration (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-table"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let API_TOKEN = '';
+        let refreshInterval = null;
+
+        // Helper: convert bytes to MB
+        function toMB(bytes) { return (bytes / (1024 * 1024)).toFixed(2); }
+
+        // Login
+        async function login() {
+            const pwd = document.getElementById('password').value;
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pwd })
+            });
+            const data = await res.json();
+            if (data.success) {
+                API_TOKEN = data.token;
+                localStorage.setItem('admin_token', API_TOKEN);
+                showDashboard();
+                startRefresh();
+            } else {
+                document.getElementById('login-error').innerText = 'Wrong password';
+                document.getElementById('login-error').classList.remove('hidden');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            API_TOKEN = '';
+            if (refreshInterval) clearInterval(refreshInterval);
+            document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('login-container').classList.remove('hidden');
+        }
+
+        async function authenticatedFetch(url, options = {}) {
+            if (!options.headers) options.headers = {};
+            options.headers['Authorization'] = `Bearer ${API_TOKEN}`;
+            const res = await fetch(url, options);
+            if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+            return res;
+        }
+
+        async function loadStats() {
+            const res = await authenticatedFetch('/api/stats');
+            const data = await res.json();
+            const s = data.stats;
+            const l = data.limits;
+
+            document.getElementById('daily-up').innerText = toMB(s.daily.upload);
+            document.getElementById('daily-down').innerText = toMB(s.daily.download);
+            document.getElementById('daily-total').innerText = toMB(s.daily.upload + s.daily.download);
+            document.getElementById('monthly-up').innerText = toMB(s.monthly.upload);
+            document.getElementById('monthly-down').innerText = toMB(s.monthly.download);
+            document.getElementById('monthly-total').innerText = toMB(s.monthly.upload + s.monthly.download);
+            document.getElementById('total-up').innerText = toMB(s.total.upload);
+            document.getElementById('total-down').innerText = toMB(s.total.download);
+            document.getElementById('total-total').innerText = toMB(s.total.upload + s.total.download);
+
+            document.getElementById('daily-limit').value = l.daily / (1024*1024);
+            document.getElementById('monthly-limit').value = l.monthly / (1024*1024);
+            document.getElementById('total-limit').value = l.total / (1024*1024);
+
+            // Update hourly chart
+            const hours = s.last24h.map(h => h.hour.slice(11,13) + 'h');
+            const uploadData = s.last24h.map(h => (h.upload / (1024*1024)));
+            const downloadData = s.last24h.map(h => (h.download / (1024*1024)));
+            if (window.hourlyChart) window.hourlyChart.destroy();
+            const ctx = document.getElementById('hourlyChart').getContext('2d');
+            window.hourlyChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: hours, datasets: [{ label: 'Upload MB', data: uploadData, backgroundColor: '#3b82f6' }, { label: 'Download MB', data: downloadData, backgroundColor: '#10b981' }] },
+                options: { responsive: true, maintainAspectRatio: true }
+            });
+        }
+
+        async function loadLogs() {
+            const res = await authenticatedFetch('/api/logs?limit=100');
+            const data = await res.json();
+            const tbody = document.getElementById('logs-table');
+            tbody.innerHTML = '';
+            data.logs.forEach(log => {
+                const row = tbody.insertRow();
+                const time = new Date(log.timestamp).toLocaleString('en-LK', { timeZone: 'Asia/Colombo' });
+                row.insertCell(0).innerText = time;
+                row.insertCell(1).innerText = log.clientIP;
+                row.insertCell(2).innerText = log.target;
+                row.insertCell(3).innerText = log.protocol;
+                row.insertCell(4).innerText = toMB(log.uploadBytes);
+                row.insertCell(5).innerText = toMB(log.downloadBytes);
+                row.insertCell(6).innerText = log.duration;
+                row.classList.add('log-row', 'border-t', 'border-gray-700');
+            });
+        }
+
+        async function getRecordingStatus() {
+            const res = await authenticatedFetch('/api/stats'); // we don't have a dedicated endpoint, but we can infer from UI state
+            // Actually we need a /api/recording_status endpoint. We'll implement via variable in memory.
+            // For simplicity, we'll just assume start/stop calls succeed and update UI accordingly.
+        }
+
+        async function startRecording() {
+            await authenticatedFetch('/api/start_recording', { method: 'POST' });
+            document.getElementById('rec-status').innerText = 'Recording: ENABLED';
+        }
+        async function stopRecording() {
+            await authenticatedFetch('/api/stop_recording', { method: 'POST' });
+            document.getElementById('rec-status').innerText = 'Recording: DISABLED';
+        }
+        async function clearLogs() {
+            if (confirm('Clear all connection logs?')) {
+                await authenticatedFetch('/api/clear_logs', { method: 'POST' });
+                loadLogs();
+            }
+        }
+        async function setLimit(type) {
+            let value = document.getElementById(`${type}-limit`).value;
+            value = parseInt(value) * 1024 * 1024;
+            await authenticatedFetch('/api/set_limit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, value }) });
+            loadStats();
+        }
+
+        function startRefresh() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            loadStats();
+            loadLogs();
+            refreshInterval = setInterval(() => { loadStats(); loadLogs(); }, 5000);
+        }
+
+        function showDashboard() {
+            document.getElementById('login-container').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            // Update date/month placeholders
+            const now = new Date();
+            document.getElementById('dashboard').innerHTML = document.getElementById('dashboard').innerHTML.replace('{{date}}', now.toLocaleDateString('en-CA'));
+            document.getElementById('dashboard').innerHTML = document.getElementById('dashboard').innerHTML.replace('{{month}}', now.toISOString().slice(0,7));
+            // Re-attach event listeners because innerHTML replaced them
+            attachEvents();
+        }
+
+        function attachEvents() {
+            document.getElementById('btn-start-rec').onclick = startRecording;
+            document.getElementById('btn-stop-rec').onclick = stopRecording;
+            // Other buttons are already defined globally
+        }
+
+        // Auto-login if token exists
+        window.onload = () => {
+            const token = localStorage.getItem('admin_token');
+            if (token) {
+                API_TOKEN = token;
+                showDashboard();
+                startRefresh();
+            } else {
+                document.getElementById('login-container').classList.remove('hidden');
+            }
+        };
+    </script>
+</body>
+</html>
