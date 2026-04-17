@@ -362,16 +362,15 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // ========== PUBLIC ROUTES ==========
-  if (url === '/sub') {
+if (url === '/sub') {
     const namePart = NAME ? `${NAME}-${ISP}` : ISP;
     const vlessURL = `vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
     const trojanURL = `trojan://${UUID}@${DOMAIN}:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
     const subscription = vlessURL + '\n' + trojanURL;
-    const base64Content = Buffer.from(subscription).toString('base64');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(base64Content + '\n');
+    res.end(subscription + '\n');
     return;
-  }
+}
 
   if (url === '/') {
     // Serve admin dashboard HTML (index.html)
