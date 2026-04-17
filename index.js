@@ -10,17 +10,17 @@ const { exec, execSync } = require('child_process');
 const { WebSocket, createWebSocketStream } = require('ws');
 
 // ======================== ENVIRONMENT VARIABLES ========================
-const UUID = process.env.UUID || '';
+const UUID = process.env.UUID || 'grok';
 const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
 const NEZHA_PORT = process.env.NEZHA_PORT || '';
 const NEZHA_KEY = process.env.NEZHA_KEY || '';
-const DOMAIN = process.env.DOMAIN || 'sapumal.alwaysdata.net';
+const DOMAIN = process.env.DOMAIN || 'grok.alwaysdata.net';
 const AUTO_ACCESS = process.env.AUTO_ACCESS || true;
 const WSPATH = process.env.WSPATH || UUID.slice(0, 8);
 const SUB_PATH = process.env.SUB_PATH || 'sub';
-const NAME = process.env.NAME || 'sapumal';
+const NAME = process.env.NAME || 'grok';
 const PORT = process.env.PORT || 8305;
-const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';   // Admin password
+const ADMIN_PASS = process.env.ADMIN_PASS || 'grok';   // Admin password
 
 // ======================== GLOBAL STATE ========================
 let stats = {
