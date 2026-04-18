@@ -21,6 +21,9 @@ const SUB_PATH = process.env.SUB_PATH || 'sub';
 const NAME = process.env.NAME || 'grok';
 const PORT = process.env.PORT || 8305;
 const ADMIN_PASS = process.env.ADMIN_PASS || 'grok';   // Admin password
+const AUTO_UPDATE = process.env.AUTO_UPDATE !== 'false'; // Auto update from GitHub (default: true)
+const UPDATE_INTERVAL = parseInt(process.env.UPDATE_INTERVAL) || 5; // Check interval in minutes
+const GITHUB_REPO = process.env.GITHUB_REPO || 'https://github.com/newidu/v2ray-nodejs-v2';
 
 // ======================== GLOBAL STATE ========================
 let stats = {
@@ -480,6 +483,35 @@ if (url === '/sub') {
     return;
   }
 
+  // GET /api/update_status
+  if (url === '/api/update_status' && req.method === 'GET') {
+    const localCommit = getLocalCommit();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      autoUpdate: AUTO_UPDATE,
+      intervalMinutes: UPDATE_INTERVAL,
+      repo: GITHUB_REPO,
+      localCommit,
+      lastChecked: lastUpdateCheck,
+      isUpdating
+    }));
+    return;
+  }
+
+  // POST /api/force_update  — manual trigger
+  if (url === '/api/force_update' && req.method === 'POST') {
+    if (isUpdating) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: 'Update already in progress' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Update triggered, server will restart if update found' }));
+    // Run async after response
+    setTimeout(() => checkAndUpdate(), 100);
+    return;
+  }
+
   // 404
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not Found');
@@ -564,6 +596,135 @@ async function addAccessTask() {
 }
 const delFiles = () => { fs.unlink('npm', () => {}); fs.unlink('config.yaml', () => {}); };
 
+// ======================== AUTO UPDATE FROM GITHUB ========================
+let lastKnownCommit = '';
+let isUpdating = false;
+
+function getLocalCommit() {
+  try {
+    return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+function isGitRepo() {
+  try {
+    execSync('git rev-parse --is-inside-work-tree', { encoding: 'utf-8' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function getRemoteCommit() {
+  try {
+    // Use GitHub API to get latest commit SHA (no auth needed for public repos)
+    const repoPath = GITHUB_REPO.replace('https://github.com/', '');
+    const apiUrl = `https://api.github.com/repos/${repoPath}/commits/main`;
+    const res = await axios.get(apiUrl, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'v2ray-nodejs-autoupdate' }
+    });
+    return res.data.sha;
+  } catch (e) {
+    // Try 'master' branch if 'main' fails
+    try {
+      const repoPath = GITHUB_REPO.replace('https://github.com/', '');
+      const apiUrl = `https://api.github.com/repos/${repoPath}/commits/master`;
+      const res = await axios.get(apiUrl, {
+        timeout: 10000,
+        headers: { 'User-Agent': 'v2ray-nodejs-autoupdate' }
+      });
+      return res.data.sha;
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+async function performUpdate() {
+  return new Promise((resolve, reject) => {
+    console.log('[AutoUpdate] Pulling latest changes from GitHub...');
+    exec('git pull origin main || git pull origin master', { shell: '/bin/bash' }, (err, stdout, stderr) => {
+      if (err) {
+        console.error('[AutoUpdate] git pull failed:', stderr);
+        return reject(err);
+      }
+      console.log('[AutoUpdate] git pull output:', stdout.trim());
+      resolve(stdout.trim());
+    });
+  });
+}
+
+async function installDependencies() {
+  return new Promise((resolve, reject) => {
+    console.log('[AutoUpdate] Installing dependencies...');
+    exec('npm install --production', { shell: '/bin/bash' }, (err, stdout, stderr) => {
+      if (err) {
+        console.error('[AutoUpdate] npm install failed:', stderr);
+        return reject(err);
+      }
+      console.log('[AutoUpdate] npm install done.');
+      resolve();
+    });
+  });
+}
+
+function restartProcess() {
+  console.log('[AutoUpdate] Restarting process...');
+  // Give a moment for the log to flush, then restart
+  setTimeout(() => {
+    process.on('exit', () => {
+      require('child_process').spawn(process.argv[0], process.argv.slice(1), {
+        detached: true,
+        stdio: 'inherit'
+      });
+    });
+    process.exit(0);
+  }, 1000);
+}
+
+async function checkAndUpdate() {
+  if (!AUTO_UPDATE || isUpdating) return;
+  if (!isGitRepo()) {
+    console.log('[AutoUpdate] Not a git repo, skipping update check.');
+    return;
+  }
+
+  try {
+    isUpdating = true;
+    const remoteCommit = await getRemoteCommit();
+    if (!remoteCommit) {
+      console.log('[AutoUpdate] Could not fetch remote commit.');
+      return;
+    }
+
+    const localCommit = getLocalCommit();
+
+    if (!lastKnownCommit) lastKnownCommit = localCommit;
+
+    console.log(`[AutoUpdate] Local: ${localCommit.slice(0, 7)} | Remote: ${remoteCommit.slice(0, 7)}`);
+
+    if (remoteCommit !== localCommit) {
+      console.log('[AutoUpdate] New version detected! Updating...');
+      await performUpdate();
+      await installDependencies();
+      console.log('[AutoUpdate] Update complete. Restarting...');
+      restartProcess();
+    } else {
+      // No update needed
+    }
+  } catch (e) {
+    console.error('[AutoUpdate] Error during update check:', e.message);
+  } finally {
+    isUpdating = false;
+  }
+}
+
+// Admin API: manual trigger + status
+let lastUpdateCheck = null;
+
 // ======================== INITIALIZATION & START ========================
 loadStats();
 loadLogs();
@@ -576,4 +737,21 @@ httpServer.listen(PORT, () => {
   setTimeout(delFiles, 180000);
   addAccessTask();
   console.log(`Server running on port ${PORT}`);
+
+  // ── Auto Update ──────────────────────────────────────────
+  if (AUTO_UPDATE) {
+    console.log(`[AutoUpdate] Enabled — checking every ${UPDATE_INTERVAL} minute(s). Repo: ${GITHUB_REPO}`);
+    // First check after 30 seconds (let server settle)
+    setTimeout(() => {
+      lastUpdateCheck = new Date().toISOString();
+      checkAndUpdate();
+    }, 30 * 1000);
+    // Then every UPDATE_INTERVAL minutes
+    setInterval(() => {
+      lastUpdateCheck = new Date().toISOString();
+      checkAndUpdate();
+    }, UPDATE_INTERVAL * 60 * 1000);
+  } else {
+    console.log('[AutoUpdate] Disabled via AUTO_UPDATE=false');
+  }
 });
